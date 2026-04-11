@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyclasswizard"
+version = "0.1.0"
+description = "Generate Python class boilerplate from a simple specification"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.scripts]
+pyclasswizard = "pyclasswizard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pyclasswizard*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
