@@ -52,14 +52,8 @@ export class PyClassNode extends vscode.TreeItem {
       this.contextValue = 'pyFunction';
     }
 
-    // Attach command so every click (including double-click detection) is captured
-    if (symbol && nodeType !== 'file') {
-      this.command = {
-        command: 'pyclasswizard.goToDefinition',
-        title: 'Go to Definition',
-        arguments: [this],
-      };
-    }
+    // No command on click – clicks only select the tree item.
+    // Navigation is available via the context menu or command palette.
   }
 }
 
