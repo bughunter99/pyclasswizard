@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import * as fs from 'fs';
 import { parsePythonSource, PySymbol } from './pythonParser';
 
@@ -53,7 +52,7 @@ export class PyClassNode extends vscode.TreeItem {
       this.contextValue = 'pyFunction';
     }
 
-    // Attach go-to command for navigable items
+    // Attach command so every click (including double-click detection) is captured
     if (symbol && nodeType !== 'file') {
       this.command = {
         command: 'pyclasswizard.goToDefinition',
@@ -124,7 +123,9 @@ export class PyClassTreeProvider implements vscode.TreeDataProvider<PyClassNode>
     const pyFiles = await vscode.workspace.findFiles('**/*.py', excludePatterns.length ? excludeGlob : undefined);
     pyFiles.sort((a, b) => a.fsPath.localeCompare(b.fsPath));
 
-    const fileNodes: PyClassNode[] = [];
+    // Class nodes come first; globals from classless files are appended after
+    const classNodes: PyClassNode[] = [];
+    const globalNodes: PyClassNode[] = [];
 
     for (const fileUri of pyFiles) {
       try {
@@ -133,27 +134,38 @@ export class PyClassTreeProvider implements vscode.TreeDataProvider<PyClassNode>
 
         if (symbols.length === 0) { continue; }
 
-        const childNodes = this.symbolsToNodes(symbols, fileUri.fsPath);
-        const relPath = vscode.workspace.asRelativePath(fileUri);
+        const fileClasses = symbols.filter((s) => s.kind === 'class');
+        const fileNonClasses = symbols.filter((s) => s.kind !== 'class');
 
-        const fileNode = new PyClassNode(
-          null,
-          'file',
-          path.basename(fileUri.fsPath),
-          fileUri.fsPath,
-          childNodes,
-          vscode.TreeItemCollapsibleState.Expanded,
-        );
-        fileNode.description = path.dirname(relPath) === '.' ? '' : path.dirname(relPath);
-        fileNode.tooltip = relPath;
+        // Each class becomes a root node directly (no file wrapper)
+        for (const sym of fileClasses) {
+          const childNodes = this.symbolsToNodes(sym.children, fileUri.fsPath);
+          const collapsible = childNodes.length > 0
+            ? vscode.TreeItemCollapsibleState.Collapsed
+            : vscode.TreeItemCollapsibleState.None;
+          classNodes.push(new PyClassNode(sym, 'class', sym.name, fileUri.fsPath, childNodes, collapsible, sym.detail));
+        }
 
-        fileNodes.push(fileNode);
+        // Files with no classes: expose their global functions/variables at root
+        if (fileClasses.length === 0) {
+          for (const sym of fileNonClasses) {
+            globalNodes.push(new PyClassNode(
+              sym,
+              sym.kind === 'global' ? 'global' : sym.kind,
+              sym.name,
+              fileUri.fsPath,
+              [],
+              vscode.TreeItemCollapsibleState.None,
+              sym.detail,
+            ));
+          }
+        }
       } catch (_err) {
         // Skip files that cannot be read
       }
     }
 
-    return fileNodes;
+    return [...classNodes, ...globalNodes];
   }
 
   private symbolsToNodes(symbols: PySymbol[], filePath: string): PyClassNode[] {

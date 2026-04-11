@@ -54,9 +54,23 @@ function activate(context) {
         // Re-triggering the tree data change will reset expansion state
         provider.refresh();
     });
+    // State for double-click detection (navigate only when the same node is
+    // activated twice within 400 ms; triple-click resets the window so it does
+    // not trigger another navigation immediately).
+    let lastClickNode;
+    let lastClickTime = 0;
     const goToDefinitionCmd = vscode.commands.registerCommand('pyclasswizard.goToDefinition', async (node) => {
         // node may come from a command palette invocation (no arg) or tree click
         if (!node || !node.symbol) {
+            return;
+        }
+        const now = Date.now();
+        const isDoubleClick = lastClickNode === node && now - lastClickTime < 400;
+        lastClickNode = node;
+        // Reset the clock after a recognised double-click so that a third rapid
+        // click starts a fresh window instead of immediately navigating again.
+        lastClickTime = isDoubleClick ? 0 : now;
+        if (!isDoubleClick) {
             return;
         }
         const uri = vscode.Uri.file(node.filePath);
