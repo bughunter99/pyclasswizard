@@ -52,37 +52,44 @@ class PyClassNode extends vscode.TreeItem {
             this.contextValue = 'pyFile';
         }
         else if (nodeType === 'class') {
-            this.iconPath = new vscode.ThemeIcon('symbol-class');
+            this.iconPath = new vscode.ThemeIcon('symbol-class', new vscode.ThemeColor('charts.yellow'));
             this.description = detail ?? '';
             this.tooltip = `class ${label}${detail ? ' ' + detail : ''}`;
             this.contextValue = 'pyClass';
         }
         else if (nodeType === 'method') {
-            this.iconPath = new vscode.ThemeIcon('symbol-method');
+            this.iconPath = new vscode.ThemeIcon('symbol-method', new vscode.ThemeColor('charts.purple'));
             this.description = '';
             this.tooltip = `def ${label}(...)`;
             this.contextValue = 'pyMethod';
         }
         else if (nodeType === 'variable') {
-            this.iconPath = new vscode.ThemeIcon('symbol-field');
+            this.iconPath = new vscode.ThemeIcon('symbol-field', new vscode.ThemeColor('charts.blue'));
             this.description = detail ?? '';
             this.tooltip = detail ? `${label}: ${detail}` : label;
             this.contextValue = 'pyVariable';
         }
         else if (nodeType === 'global') {
-            this.iconPath = new vscode.ThemeIcon('symbol-variable');
+            this.iconPath = new vscode.ThemeIcon('symbol-variable', new vscode.ThemeColor('charts.blue'));
             this.description = detail ?? '';
             this.tooltip = detail ? `${label}: ${detail}` : label;
             this.contextValue = 'pyGlobal';
         }
         else if (nodeType === 'function') {
-            this.iconPath = new vscode.ThemeIcon('symbol-function');
+            this.iconPath = new vscode.ThemeIcon('symbol-function', new vscode.ThemeColor('charts.green'));
             this.description = '';
             this.tooltip = `def ${label}(...)`;
             this.contextValue = 'pyFunction';
         }
-        // No command on click – clicks only select the tree item.
-        // Navigation is available via the context menu or command palette.
+        // Attach click command so that the double-click detection in extension.ts
+        // receives each activation and can navigate on the second click within 400 ms.
+        if (symbol && nodeType !== 'file') {
+            this.command = {
+                command: 'pyclasswizard.goToDefinition',
+                title: 'Go to Definition',
+                arguments: [this],
+            };
+        }
     }
 }
 exports.PyClassNode = PyClassNode;
