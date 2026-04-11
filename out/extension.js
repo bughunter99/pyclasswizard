@@ -69,7 +69,7 @@ function activate(context) {
         editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     });
     // ---------------------------------------------------------------------------
-    // Auto-refresh when workspace changes
+    // Auto-refresh when workspace changes or active editor changes
     // ---------------------------------------------------------------------------
     const configChangeListener = vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('pyclasswizard')) {
@@ -79,11 +79,20 @@ function activate(context) {
     const workspaceFolderListener = vscode.workspace.onDidChangeWorkspaceFolders(() => {
         provider.refresh();
     });
+    // Refresh when the user switches to a Python file so the outline stays current.
+    // Debounced to avoid thrashing in large workspaces when switching quickly.
+    let editorRefreshTimer;
+    const activeEditorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
+        if (editor && editor.document.languageId === 'python') {
+            clearTimeout(editorRefreshTimer);
+            editorRefreshTimer = setTimeout(() => provider.refresh(), 300);
+        }
+    });
     // ---------------------------------------------------------------------------
     // Initial refresh
     // ---------------------------------------------------------------------------
     provider.refresh();
-    context.subscriptions.push(treeView, provider, refreshCmd, collapseAllCmd, goToDefinitionCmd, configChangeListener, workspaceFolderListener);
+    context.subscriptions.push(treeView, provider, refreshCmd, collapseAllCmd, goToDefinitionCmd, configChangeListener, workspaceFolderListener, activeEditorListener);
 }
 function deactivate() {
     // Nothing to clean up beyond subscriptions

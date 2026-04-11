@@ -43,7 +43,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   // ---------------------------------------------------------------------------
-  // Auto-refresh when workspace changes
+  // Auto-refresh when workspace changes or active editor changes
   // ---------------------------------------------------------------------------
   const configChangeListener = vscode.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration('pyclasswizard')) {
@@ -53,6 +53,16 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const workspaceFolderListener = vscode.workspace.onDidChangeWorkspaceFolders(() => {
     provider.refresh();
+  });
+
+  // Refresh when the user switches to a Python file so the outline stays current.
+  // Debounced to avoid thrashing in large workspaces when switching quickly.
+  let editorRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  const activeEditorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
+    if (editor && editor.document.languageId === 'python') {
+      clearTimeout(editorRefreshTimer);
+      editorRefreshTimer = setTimeout(() => provider.refresh(), 300);
+    }
   });
 
   // ---------------------------------------------------------------------------
@@ -68,6 +78,7 @@ export function activate(context: vscode.ExtensionContext): void {
     goToDefinitionCmd,
     configChangeListener,
     workspaceFolderListener,
+    activeEditorListener,
   );
 }
 
