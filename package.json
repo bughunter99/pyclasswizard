@@ -1,0 +1,121 @@
+{
+  "name": "pyclasswizard",
+  "displayName": "PyClassWizard",
+  "description": "Visual Studio 6.0 ClassWizard-style outline for Python projects: browse global variables, classes, and member variables across all files.",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bughunter99/pyclasswizard"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "python",
+    "outline",
+    "class",
+    "wizard",
+    "classwizard"
+  ],
+  "activationEvents": [
+    "onLanguage:python",
+    "workspaceContains:**/*.py"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "pyclasswizard.classView",
+          "name": "PyClassWizard",
+          "icon": "$(symbol-class)",
+          "contextualTitle": "PyClassWizard"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "pyclasswizard.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)",
+        "category": "PyClassWizard"
+      },
+      {
+        "command": "pyclasswizard.goToDefinition",
+        "title": "Go to Definition",
+        "icon": "$(go-to-file)",
+        "category": "PyClassWizard"
+      },
+      {
+        "command": "pyclasswizard.collapseAll",
+        "title": "Collapse All",
+        "icon": "$(collapse-all)",
+        "category": "PyClassWizard"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "pyclasswizard.refresh",
+          "when": "view == pyclasswizard.classView",
+          "group": "navigation"
+        },
+        {
+          "command": "pyclasswizard.collapseAll",
+          "when": "view == pyclasswizard.classView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "pyclasswizard.goToDefinition",
+          "when": "view == pyclasswizard.classView",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "PyClassWizard",
+      "properties": {
+        "pyclasswizard.excludePatterns": {
+          "type": "array",
+          "default": [
+            "**/.*",
+            "**/__pycache__/**",
+            "**/node_modules/**",
+            "**/venv/**",
+            "**/.venv/**",
+            "**/site-packages/**"
+          ],
+          "description": "Glob patterns for paths to exclude from scanning."
+        },
+        "pyclasswizard.showMethods": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show class methods in the outline tree."
+        },
+        "pyclasswizard.showGlobalVariables": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show module-level (global) variables in the outline tree."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.3.0"
+  }
+}
