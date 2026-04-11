@@ -187,6 +187,48 @@ function parsePythonSource(source, filePath, showMethods, showGlobals) {
             detail,
         });
     }
+    // --- Global / module-level functions ---
+    {
+        const globalDefRegex = /^([ \t]*)def\s+([A-Za-z_]\w*)\s*\(/gm;
+        let gdMatch;
+        // Reuse class ranges to avoid matching methods inside classes
+        const classRangesForFuncs = [];
+        const classRe0 = /^class\s+[A-Za-z_]\w*\s*(?:\([^)]*\))?\s*:/gm;
+        let cr0;
+        while ((cr0 = classRe0.exec(stripped)) !== null) {
+            const bodyStart = stripped.indexOf('\n', cr0.index) + 1;
+            let end = stripped.length;
+            const afterLines = stripped.slice(bodyStart).split('\n');
+            let offset = bodyStart;
+            for (const al of afterLines) {
+                if (al.trim().length > 0 && !/^\s/.test(al)) {
+                    end = offset;
+                    break;
+                }
+                offset += al.length + 1;
+            }
+            classRangesForFuncs.push({ start: cr0.index, end });
+        }
+        while ((gdMatch = globalDefRegex.exec(stripped)) !== null) {
+            const indent = gdMatch[1].length;
+            if (indent !== 0) {
+                continue;
+            } // only top-level functions
+            const funcName = gdMatch[2];
+            const offset = gdMatch.index;
+            if (classRangesForFuncs.some((r) => offset >= r.start && offset < r.end)) {
+                continue;
+            }
+            symbols.push({
+                name: funcName,
+                kind: 'function',
+                line: lineOf(source, offset),
+                column: columnOf(source, offset),
+                filePath,
+                children: [],
+            });
+        }
+    }
     // --- Global / module-level variables ---
     if (showGlobals) {
         const globalVarRegex = /^([A-Za-z_]\w*)\s*(?::[^=\n]+)?\s*=/gm;

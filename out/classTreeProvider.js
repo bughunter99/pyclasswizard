@@ -76,6 +76,12 @@ class PyClassNode extends vscode.TreeItem {
             this.tooltip = detail ? `${label}: ${detail}` : label;
             this.contextValue = 'pyGlobal';
         }
+        else if (nodeType === 'function') {
+            this.iconPath = new vscode.ThemeIcon('symbol-function');
+            this.description = '';
+            this.tooltip = `def ${label}(...)`;
+            this.contextValue = 'pyFunction';
+        }
         // Attach go-to command for navigable items
         if (symbol && nodeType !== 'file') {
             this.command = {

@@ -7,7 +7,7 @@ import { parsePythonSource, PySymbol } from './pythonParser';
 // Tree item
 // ---------------------------------------------------------------------------
 
-export type NodeType = 'root' | 'file' | 'class' | 'method' | 'variable' | 'global';
+export type NodeType = 'root' | 'file' | 'class' | 'method' | 'variable' | 'global' | 'function';
 
 export class PyClassNode extends vscode.TreeItem {
   constructor(
@@ -46,6 +46,11 @@ export class PyClassNode extends vscode.TreeItem {
       this.description = detail ?? '';
       this.tooltip = detail ? `${label}: ${detail}` : label;
       this.contextValue = 'pyGlobal';
+    } else if (nodeType === 'function') {
+      this.iconPath = new vscode.ThemeIcon('symbol-function');
+      this.description = '';
+      this.tooltip = `def ${label}(...)`;
+      this.contextValue = 'pyFunction';
     }
 
     // Attach go-to command for navigable items
