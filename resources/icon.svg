@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+  <!-- Top class box -->
+  <rect x="8" y="1" width="8" height="5" rx="1"/>
+  <!-- Stem down -->
+  <rect x="11" y="6" width="2" height="3"/>
+  <!-- Horizontal crossbar -->
+  <rect x="4" y="9" width="16" height="2"/>
+  <!-- Left branch down -->
+  <rect x="4" y="11" width="2" height="3"/>
+  <!-- Right branch down -->
+  <rect x="18" y="11" width="2" height="3"/>
+  <!-- Left child box -->
+  <rect x="1" y="14" width="8" height="5" rx="1"/>
+  <!-- Right child box -->
+  <rect x="15" y="14" width="8" height="5" rx="1"/>
+</svg>

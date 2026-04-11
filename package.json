@@ -23,20 +23,42 @@
   ],
   "activationEvents": [
     "onLanguage:python",
-    "workspaceContains:**/*.py"
+    "workspaceContains:**/*.py",
+    "onView:pyclasswizard.classView"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pyclasswizard",
+          "title": "PyClassWizard",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "pyclasswizard": [
         {
           "id": "pyclasswizard.classView",
-          "name": "PyClassWizard",
-          "icon": "$(symbol-class)",
+          "name": "Python Class Outline",
+          "icon": "resources/icon.svg",
           "contextualTitle": "PyClassWizard"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "pyclasswizard.classView",
+        "contents": "No workspace folder is open.\n\nOpen a folder containing Python files to see the class outline here.\n[Open Folder](command:vscode.openFolder)",
+        "when": "workbenchState == empty"
+      },
+      {
+        "view": "pyclasswizard.classView",
+        "contents": "No Python files with classes or variables were found in this workspace.\n\nOpen or create a Python file with class definitions to get started.\n[Refresh](command:pyclasswizard.refresh)",
+        "when": "workbenchState != empty"
+      }
+    ],
     "commands": [
       {
         "command": "pyclasswizard.refresh",

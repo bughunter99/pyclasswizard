@@ -144,7 +144,7 @@ class PyClassTreeProvider {
                 }
                 const childNodes = this.symbolsToNodes(symbols, fileUri.fsPath);
                 const relPath = vscode.workspace.asRelativePath(fileUri);
-                const fileNode = new PyClassNode(null, 'file', path.basename(fileUri.fsPath), fileUri.fsPath, childNodes, vscode.TreeItemCollapsibleState.Collapsed);
+                const fileNode = new PyClassNode(null, 'file', path.basename(fileUri.fsPath), fileUri.fsPath, childNodes, vscode.TreeItemCollapsibleState.Expanded);
                 fileNode.description = path.dirname(relPath) === '.' ? '' : path.dirname(relPath);
                 fileNode.tooltip = relPath;
                 fileNodes.push(fileNode);

@@ -137,7 +137,7 @@ export class PyClassTreeProvider implements vscode.TreeDataProvider<PyClassNode>
           path.basename(fileUri.fsPath),
           fileUri.fsPath,
           childNodes,
-          vscode.TreeItemCollapsibleState.Collapsed,
+          vscode.TreeItemCollapsibleState.Expanded,
         );
         fileNode.description = path.dirname(relPath) === '.' ? '' : path.dirname(relPath);
         fileNode.tooltip = relPath;
