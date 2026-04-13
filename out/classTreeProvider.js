@@ -38,6 +38,14 @@ const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const pythonParser_1 = require("./pythonParser");
+const DRAG_MIME = 'application/vnd.code.tree.pyclasswizard.classview';
+/** Stable key that identifies a top-level symbol for CLW persistence. */
+function makeSymbolKey(filePath, kind, name) {
+    return `${filePath}::${kind}::${name}`;
+}
+// ---------------------------------------------------------------------------
+// Tree item
+// ---------------------------------------------------------------------------
 class PyClassNode extends vscode.TreeItem {
     constructor(symbol, nodeType, label, filePath, children, collapsibleState, detail) {
         super(label, collapsibleState);
@@ -46,41 +54,50 @@ class PyClassNode extends vscode.TreeItem {
         this.label = label;
         this.filePath = filePath;
         this.children = children;
-        if (nodeType === 'file') {
-            this.iconPath = new vscode.ThemeIcon('file-code');
-            this.description = '';
-            this.tooltip = filePath;
-            this.contextValue = 'pyFile';
-        }
-        else if (nodeType === 'class') {
-            this.iconPath = new vscode.ThemeIcon('symbol-class', new vscode.ThemeColor('charts.yellow'));
-            this.description = detail ?? '';
-            this.tooltip = `class ${label}${detail ? ' ' + detail : ''}`;
-            this.contextValue = 'pyClass';
-        }
-        else if (nodeType === 'method') {
-            this.iconPath = new vscode.ThemeIcon('symbol-method', new vscode.ThemeColor('charts.purple'));
-            this.description = '';
-            this.tooltip = `def ${label}(...)`;
-            this.contextValue = 'pyMethod';
-        }
-        else if (nodeType === 'variable') {
-            this.iconPath = new vscode.ThemeIcon('symbol-field', new vscode.ThemeColor('charts.blue'));
-            this.description = detail ?? '';
-            this.tooltip = detail ? `${label}: ${detail}` : label;
-            this.contextValue = 'pyVariable';
-        }
-        else if (nodeType === 'global') {
-            this.iconPath = new vscode.ThemeIcon('symbol-variable', new vscode.ThemeColor('charts.blue'));
-            this.description = detail ?? '';
-            this.tooltip = detail ? `${label}: ${detail}` : label;
-            this.contextValue = 'pyGlobal';
-        }
-        else if (nodeType === 'function') {
-            this.iconPath = new vscode.ThemeIcon('symbol-function', new vscode.ThemeColor('charts.green'));
-            this.description = '';
-            this.tooltip = `def ${label}(...)`;
-            this.contextValue = 'pyFunction';
+        /** Set on folder nodes: the persistent folder ID from the CLW store. */
+        this.folderId = null;
+        switch (nodeType) {
+            case 'folder':
+                this.iconPath = new vscode.ThemeIcon('folder');
+                this.tooltip = label;
+                this.contextValue = 'pyFolder';
+                break;
+            case 'file':
+                this.iconPath = new vscode.ThemeIcon('file-code');
+                this.description = '';
+                this.tooltip = filePath;
+                this.contextValue = 'pyFile';
+                break;
+            case 'class':
+                this.iconPath = new vscode.ThemeIcon('symbol-class', new vscode.ThemeColor('charts.yellow'));
+                this.description = detail ?? '';
+                this.tooltip = `class ${label}${detail ? ' ' + detail : ''}`;
+                this.contextValue = 'pyClass';
+                break;
+            case 'method':
+                this.iconPath = new vscode.ThemeIcon('symbol-method', new vscode.ThemeColor('charts.purple'));
+                this.description = '';
+                this.tooltip = `def ${label}(...)`;
+                this.contextValue = 'pyMethod';
+                break;
+            case 'variable':
+                this.iconPath = new vscode.ThemeIcon('symbol-field', new vscode.ThemeColor('charts.blue'));
+                this.description = detail ?? '';
+                this.tooltip = detail ? `${label}: ${detail}` : label;
+                this.contextValue = 'pyVariable';
+                break;
+            case 'global':
+                this.iconPath = new vscode.ThemeIcon('symbol-variable', new vscode.ThemeColor('charts.blue'));
+                this.description = detail ?? '';
+                this.tooltip = detail ? `${label}: ${detail}` : label;
+                this.contextValue = 'pyGlobal';
+                break;
+            case 'function':
+                this.iconPath = new vscode.ThemeIcon('symbol-function', new vscode.ThemeColor('charts.green'));
+                this.description = '';
+                this.tooltip = `def ${label}(...)`;
+                this.contextValue = 'pyFunction';
+                break;
         }
         // Attach click command so that the double-click detection in extension.ts
         // receives each activation and can navigate on the second click within 400 ms.
@@ -95,14 +112,18 @@ class PyClassNode extends vscode.TreeItem {
 }
 exports.PyClassNode = PyClassNode;
 // ---------------------------------------------------------------------------
-// TreeDataProvider
+// TreeDataProvider + TreeDragAndDropController
 // ---------------------------------------------------------------------------
 class PyClassTreeProvider {
-    constructor(context) {
+    constructor(context, clwStore) {
         this.context = context;
+        this.clwStore = clwStore;
         this._onDidChangeTreeData = new vscode.EventEmitter();
         this.onDidChangeTreeData = this._onDidChangeTreeData.event;
         this.rootNodes = [];
+        // TreeDragAndDropController ------------------------------------------------
+        this.dragMimeTypes = [DRAG_MIME];
+        this.dropMimeTypes = [DRAG_MIME];
         this.setupFileWatcher();
     }
     setupFileWatcher() {
@@ -124,11 +145,85 @@ class PyClassTreeProvider {
     }
     async getChildren(element) {
         if (!element) {
-            // Root: scan workspace for Python files
             this.rootNodes = await this.buildTree();
             return this.rootNodes;
         }
         return element.children;
+    }
+    // ---------------------------------------------------------------------------
+    // Drag and Drop
+    // ---------------------------------------------------------------------------
+    handleDrag(source, dataTransfer, _token) {
+        // Only top-level items (not methods / member variables inside a class) may be dragged
+        const draggable = source.filter(n => n.nodeType === 'folder' ||
+            n.nodeType === 'class' ||
+            n.nodeType === 'function' ||
+            n.nodeType === 'global');
+        if (draggable.length === 0) {
+            return;
+        }
+        dataTransfer.set(DRAG_MIME, new vscode.DataTransferItem(draggable));
+    }
+    async handleDrop(target, dataTransfer, _token) {
+        const transferItem = dataTransfer.get(DRAG_MIME);
+        if (!transferItem) {
+            return;
+        }
+        const droppedNodes = transferItem.value;
+        if (!Array.isArray(droppedNodes) || droppedNodes.length === 0) {
+            return;
+        }
+        // Determine target folder ID (null → root / unassigned)
+        let targetFolderId = null;
+        if (target) {
+            if (target.nodeType === 'folder') {
+                targetFolderId = target.folderId;
+            }
+            else if (target.symbolKey !== undefined) {
+                // Drop onto a symbol → place alongside it (same folder or root)
+                targetFolderId = this.clwStore.getAssignment(target.symbolKey) ?? null;
+            }
+        }
+        let changed = false;
+        for (const node of droppedNodes) {
+            if (node.nodeType === 'folder' && node.folderId !== null) {
+                if (node.folderId === targetFolderId) {
+                    continue;
+                }
+                if (targetFolderId && this.isFolderDescendant(targetFolderId, node.folderId)) {
+                    vscode.window.showInformationMessage(`Cannot move folder "${node.label}" into one of its own sub-folders.`);
+                    continue;
+                }
+                this.clwStore.moveFolderTo(node.folderId, targetFolderId);
+                changed = true;
+            }
+            else if (node.symbolKey !== undefined) {
+                if (targetFolderId !== null) {
+                    this.clwStore.assignToFolder(node.symbolKey, targetFolderId);
+                }
+                else {
+                    this.clwStore.removeFromFolder(node.symbolKey);
+                }
+                changed = true;
+            }
+        }
+        if (changed) {
+            this.refresh();
+        }
+    }
+    /** Returns true if `folderId` is a descendant of `ancestorId` (max 100 levels deep). */
+    isFolderDescendant(folderId, ancestorId, depth = 0) {
+        if (depth > 100) {
+            return false;
+        } // guard against corrupt cycles
+        const folder = this.clwStore.getFolderById(folderId);
+        if (!folder || folder.parentId === null) {
+            return false;
+        }
+        if (folder.parentId === ancestorId) {
+            return true;
+        }
+        return this.isFolderDescendant(folder.parentId, ancestorId, depth + 1);
     }
     // ---------------------------------------------------------------------------
     // Build the full tree
@@ -157,7 +252,6 @@ class PyClassTreeProvider {
                 for (const sym of fileClasses) {
                     allClassData.push({ sym, filePath: fileUri.fsPath });
                 }
-                // Files with no classes: expose their global functions/variables at root
                 if (fileClasses.length === 0) {
                     for (const sym of fileNonClasses) {
                         if (sym.kind === 'function') {
@@ -177,7 +271,7 @@ class PyClassTreeProvider {
         allClassData.sort((a, b) => a.sym.name.localeCompare(b.sym.name));
         allFunctionData.sort((a, b) => a.sym.name.localeCompare(b.sym.name));
         allVarData.sort((a, b) => a.sym.name.localeCompare(b.sym.name));
-        // Count occurrences of each name within each group for duplicate detection
+        // Duplicate name detection helpers
         const countNames = (data) => {
             const counts = new Map();
             for (const { sym } of data) {
@@ -188,7 +282,6 @@ class PyClassTreeProvider {
         const classCounts = countNames(allClassData);
         const functionCounts = countNames(allFunctionData);
         const varCounts = countNames(allVarData);
-        // Build label: append (filename) for the 2nd and later occurrences of the same name
         const makeLabel = (name, filePath, seen, counts) => {
             const seenCount = seen.get(name) ?? 0;
             seen.set(name, seenCount + 1);
@@ -196,30 +289,93 @@ class PyClassTreeProvider {
                 ? `${name} (${path.basename(filePath)})`
                 : name;
         };
-        // Build class nodes
         const seenClassNames = new Map();
+        const seenFunctionNames = new Map();
+        const seenVarNames = new Map();
+        // Build class nodes
         const classNodes = allClassData.map(({ sym, filePath }) => {
+            const key = makeSymbolKey(filePath, sym.kind, sym.name);
             const label = makeLabel(sym.name, filePath, seenClassNames, classCounts);
             const childNodes = this.symbolsToNodes(sym.children, filePath);
             const collapsible = childNodes.length > 0
                 ? vscode.TreeItemCollapsibleState.Collapsed
                 : vscode.TreeItemCollapsibleState.None;
-            return new PyClassNode(sym, 'class', label, filePath, childNodes, collapsible, sym.detail);
+            const node = new PyClassNode(sym, 'class', label, filePath, childNodes, collapsible, sym.detail);
+            node.symbolKey = key;
+            node.id = `sym::${key}`;
+            return node;
         });
         // Build global function nodes
-        const seenFunctionNames = new Map();
         const functionNodes = allFunctionData.map(({ sym, filePath }) => {
+            const key = makeSymbolKey(filePath, sym.kind, sym.name);
             const label = makeLabel(sym.name, filePath, seenFunctionNames, functionCounts);
-            return new PyClassNode(sym, 'function', label, filePath, [], vscode.TreeItemCollapsibleState.None, sym.detail);
+            const node = new PyClassNode(sym, 'function', label, filePath, [], vscode.TreeItemCollapsibleState.None, sym.detail);
+            node.symbolKey = key;
+            node.id = `sym::${key}`;
+            return node;
         });
         // Build global variable nodes
-        const seenVarNames = new Map();
         const varNodes = allVarData.map(({ sym, filePath }) => {
+            const key = makeSymbolKey(filePath, sym.kind, sym.name);
             const label = makeLabel(sym.name, filePath, seenVarNames, varCounts);
-            return new PyClassNode(sym, 'global', label, filePath, [], vscode.TreeItemCollapsibleState.None, sym.detail);
+            const node = new PyClassNode(sym, 'global', label, filePath, [], vscode.TreeItemCollapsibleState.None, sym.detail);
+            node.symbolKey = key;
+            node.id = `sym::${key}`;
+            return node;
         });
-        // Order: classes → global functions → global variables (each group sorted alphabetically)
-        return [...classNodes, ...functionNodes, ...varNodes];
+        // Map from symbolKey → node for quick folder lookup
+        const symbolNodeMap = new Map();
+        for (const n of [...classNodes, ...functionNodes, ...varNodes]) {
+            if (n.symbolKey) {
+                symbolNodeMap.set(n.symbolKey, n);
+            }
+        }
+        // Collect all keys that have a folder assignment
+        const allFolderData = this.clwStore.getFolders();
+        const allAssignedKeys = new Set();
+        for (const folder of allFolderData) {
+            for (const key of this.clwStore.getSymbolsInFolder(folder.id)) {
+                allAssignedKeys.add(key);
+            }
+        }
+        // Build folder nodes recursively (folders first, then symbols, each A-Z)
+        const buildFolderNode = (folder) => {
+            const symbolKeys = this.clwStore.getSymbolsInFolder(folder.id);
+            const symbolChildren = symbolKeys
+                .map(k => symbolNodeMap.get(k))
+                .filter((n) => n !== undefined);
+            symbolChildren.sort((a, b) => {
+                const rank = { class: 0, function: 1, global: 2 };
+                const ra = rank[a.nodeType] ?? 3;
+                const rb = rank[b.nodeType] ?? 3;
+                if (ra !== rb) {
+                    return ra - rb;
+                }
+                return a.label.localeCompare(b.label);
+            });
+            const childFolders = allFolderData
+                .filter(f => f.parentId === folder.id)
+                .map(buildFolderNode)
+                .sort((a, b) => a.label.localeCompare(b.label));
+            const children = [...childFolders, ...symbolChildren];
+            const collapsible = children.length > 0
+                ? vscode.TreeItemCollapsibleState.Collapsed
+                : vscode.TreeItemCollapsibleState.None;
+            const node = new PyClassNode(null, 'folder', folder.name, '', children, collapsible);
+            node.folderId = folder.id;
+            node.id = `folder::${folder.id}`;
+            return node;
+        };
+        const topFolderNodes = allFolderData
+            .filter(f => f.parentId === null)
+            .map(buildFolderNode)
+            .sort((a, b) => a.label.localeCompare(b.label));
+        // Unassigned symbol nodes (not placed in any folder)
+        const unassignedClasses = classNodes.filter(n => !allAssignedKeys.has(n.symbolKey ?? ''));
+        const unassignedFunctions = functionNodes.filter(n => !allAssignedKeys.has(n.symbolKey ?? ''));
+        const unassignedVars = varNodes.filter(n => !allAssignedKeys.has(n.symbolKey ?? ''));
+        // Order: folders (A-Z) → classes (A-Z) → functions (A-Z) → globals (A-Z)
+        return [...topFolderNodes, ...unassignedClasses, ...unassignedFunctions, ...unassignedVars];
     }
     symbolsToNodes(symbols, filePath) {
         // Sort: methods first (A→Z), then variables/globals (A→Z)

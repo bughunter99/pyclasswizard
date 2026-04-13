@@ -1,13 +1,17 @@
 import * as vscode from 'vscode';
 import { PyClassTreeProvider, PyClassNode } from './classTreeProvider';
+import { ClwStore } from './clwStore';
 
 export function activate(context: vscode.ExtensionContext): void {
-  const provider = new PyClassTreeProvider(context);
+  const clwStore = new ClwStore();
+  const provider = new PyClassTreeProvider(context, clwStore);
 
-  // Register the TreeView
+  // Register the TreeView with multi-select and drag-and-drop support
   const treeView = vscode.window.createTreeView('pyclasswizard.classView', {
     treeDataProvider: provider,
     showCollapseAll: true,
+    canSelectMany: true,
+    dragAndDropController: provider,
   });
 
   // ---------------------------------------------------------------------------
@@ -19,7 +23,6 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const collapseAllCmd = vscode.commands.registerCommand('pyclasswizard.collapseAll', async () => {
-    // Re-triggering the tree data change will reset expansion state
     provider.refresh();
   });
 
@@ -44,23 +47,19 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   // State for double-click detection (navigate only when the same node is
-  // activated twice within 400 ms; triple-click resets the window so it does
-  // not trigger another navigation immediately).
+  // activated twice within 400 ms).
   let lastClickNode: PyClassNode | undefined;
   let lastClickTime = 0;
 
   const goToDefinitionCmd = vscode.commands.registerCommand(
     'pyclasswizard.goToDefinition',
     async (node: PyClassNode | undefined) => {
-      // node may come from a command palette invocation (no arg) or tree click
       if (!node || !node.symbol) { return; }
 
       const now = Date.now();
       const isDoubleClick = lastClickNode === node && now - lastClickTime < 400;
 
       lastClickNode = node;
-      // Reset the clock after a recognised double-click so that a third rapid
-      // click starts a fresh window instead of immediately navigating again.
       lastClickTime = isDoubleClick ? 0 : now;
 
       if (!isDoubleClick) { return; }
@@ -69,8 +68,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
-  // Keyboard navigation: Enter key navigates directly to the selected symbol
-  // without requiring a double-click (VS6 ClassWizard-style behaviour).
+  // Keyboard navigation: Enter key navigates directly to the selected symbol.
   const navigateToSourceCmd = vscode.commands.registerCommand(
     'pyclasswizard.navigateToSource',
     async () => {
@@ -81,8 +79,59 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   // ---------------------------------------------------------------------------
+  // Folder management commands
+  // ---------------------------------------------------------------------------
+
+  const newFolderCmd = vscode.commands.registerCommand(
+    'pyclasswizard.newFolder',
+    async (node?: PyClassNode) => {
+      const name = await vscode.window.showInputBox({
+        prompt: 'Enter folder name',
+        placeHolder: 'New Folder',
+        validateInput: v => v.trim() ? undefined : 'Folder name cannot be empty',
+      });
+      if (!name) { return; }
+      // If invoked from a folder node, create a sub-folder; otherwise create at root.
+      const parentId = node?.nodeType === 'folder' ? node.folderId : null;
+      clwStore.createFolder(name.trim(), parentId);
+      provider.refresh();
+    }
+  );
+
+  const renameFolderCmd = vscode.commands.registerCommand(
+    'pyclasswizard.renameFolder',
+    async (node?: PyClassNode) => {
+      if (!node || node.nodeType !== 'folder' || !node.folderId) { return; }
+      const name = await vscode.window.showInputBox({
+        prompt: 'Enter new folder name',
+        value: node.label as string,
+        validateInput: v => v.trim() ? undefined : 'Folder name cannot be empty',
+      });
+      if (!name) { return; }
+      clwStore.renameFolder(node.folderId, name.trim());
+      provider.refresh();
+    }
+  );
+
+  const deleteFolderCmd = vscode.commands.registerCommand(
+    'pyclasswizard.deleteFolder',
+    async (node?: PyClassNode) => {
+      if (!node || node.nodeType !== 'folder' || !node.folderId) { return; }
+      const answer = await vscode.window.showWarningMessage(
+        `Delete folder "${node.label as string}"? Items inside will be moved to root.`,
+        { modal: true },
+        'Delete'
+      );
+      if (answer !== 'Delete') { return; }
+      clwStore.deleteFolder(node.folderId);
+      provider.refresh();
+    }
+  );
+
+  // ---------------------------------------------------------------------------
   // Auto-refresh when workspace changes or active editor changes
   // ---------------------------------------------------------------------------
+
   const configChangeListener = vscode.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration('pyclasswizard')) {
       provider.refresh();
@@ -90,11 +139,11 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const workspaceFolderListener = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+    clwStore.load();
     provider.refresh();
   });
 
-  // Refresh when the user switches to a Python file so the outline stays current.
-  // Debounced to avoid thrashing in large workspaces when switching quickly.
+  // Debounced refresh on Python file save
   let editorRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   const activeEditorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
     if (editor && editor.document.languageId === 'python') {
@@ -115,6 +164,9 @@ export function activate(context: vscode.ExtensionContext): void {
     collapseAllCmd,
     goToDefinitionCmd,
     navigateToSourceCmd,
+    newFolderCmd,
+    renameFolderCmd,
+    deleteFolderCmd,
     configChangeListener,
     workspaceFolderListener,
     activeEditorListener,
