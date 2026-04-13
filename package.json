@@ -73,10 +73,43 @@
         "category": "PyClassWizard"
       },
       {
+        "command": "pyclasswizard.navigateToSource",
+        "title": "Navigate to Source",
+        "category": "PyClassWizard"
+      },
+      {
         "command": "pyclasswizard.collapseAll",
         "title": "Collapse All",
         "icon": "$(collapse-all)",
         "category": "PyClassWizard"
+      },
+      {
+        "command": "pyclasswizard.newFolder",
+        "title": "New Folder",
+        "icon": "$(new-folder)",
+        "category": "PyClassWizard"
+      },
+      {
+        "command": "pyclasswizard.renameFolder",
+        "title": "Rename Folder",
+        "category": "PyClassWizard"
+      },
+      {
+        "command": "pyclasswizard.deleteFolder",
+        "title": "Delete Folder",
+        "category": "PyClassWizard"
+      },
+      {
+        "command": "pyclasswizard.moveToFolder",
+        "title": "Move to Folder…",
+        "category": "PyClassWizard"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "pyclasswizard.navigateToSource",
+        "key": "enter",
+        "when": "focusedView == pyclasswizard.classView"
       }
     ],
     "menus": {
@@ -90,13 +123,38 @@
           "command": "pyclasswizard.collapseAll",
           "when": "view == pyclasswizard.classView",
           "group": "navigation"
+        },
+        {
+          "command": "pyclasswizard.newFolder",
+          "when": "view == pyclasswizard.classView",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
         {
           "command": "pyclasswizard.goToDefinition",
-          "when": "view == pyclasswizard.classView",
+          "when": "view == pyclasswizard.classView && viewItem != pyFolder",
           "group": "inline"
+        },
+        {
+          "command": "pyclasswizard.newFolder",
+          "when": "view == pyclasswizard.classView",
+          "group": "1_folder@1"
+        },
+        {
+          "command": "pyclasswizard.renameFolder",
+          "when": "view == pyclasswizard.classView && viewItem == pyFolder",
+          "group": "1_folder@2"
+        },
+        {
+          "command": "pyclasswizard.deleteFolder",
+          "when": "view == pyclasswizard.classView && viewItem == pyFolder",
+          "group": "1_folder@3"
+        },
+        {
+          "command": "pyclasswizard.moveToFolder",
+          "when": "view == pyclasswizard.classView && (viewItem == pyClass || viewItem == pyFunction || viewItem == pyGlobal)",
+          "group": "1_folder@4"
         }
       ]
     },
