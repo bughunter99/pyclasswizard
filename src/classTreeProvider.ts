@@ -13,6 +13,9 @@ export type NodeType =
   | 'global' | 'function' | 'folder';
 
 const DRAG_MIME = 'application/pyclasswizard-dnd';
+// VS Code automatically adds this built-in MIME for same-tree drags.
+// It MUST be in dropMimeTypes for VS Code to recognise intra-tree drops.
+const TREE_MIME = 'application/vnd.code.tree.pyclasswizard.classView';
 
 /** Stable key that identifies a top-level symbol for CLW persistence. */
 function makeSymbolKey(filePath: string, kind: string, name: string): string {
@@ -112,11 +115,11 @@ export class PyClassTreeProvider
   private fileWatcher: vscode.FileSystemWatcher | undefined;
 
   // TreeDragAndDropController ------------------------------------------------
-  // Use a private custom MIME for the payload.  VS Code auto-manages the
-  // 'application/vnd.code.tree.*' namespace and would overwrite anything we
-  // store there, so we keep our data under a separate key.
+  // DRAG_MIME carries our node payload; TREE_MIME is VS Code's built-in
+  // same-tree type and MUST appear in dropMimeTypes so that VS Code actually
+  // triggers the drop when items from this tree are released on a target.
   readonly dragMimeTypes: readonly string[] = [DRAG_MIME];
-  readonly dropMimeTypes: readonly string[] = [DRAG_MIME];
+  readonly dropMimeTypes: readonly string[] = [DRAG_MIME, TREE_MIME];
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -180,27 +183,39 @@ export class PyClassTreeProvider
     dataTransfer: vscode.DataTransfer,
     _token: vscode.CancellationToken
   ): Promise<void> {
-    const transferItem = dataTransfer.get(DRAG_MIME);
-    if (!transferItem) { return; }
+    // Prefer VS Code's built-in tree MIME: for same-tree drops VS Code sets
+    // its value to the actual PyClassNode[] that were dragged, which is the
+    // most reliable source.  Fall back to our own custom MIME payload.
+    let droppedNodes: PyClassNode[] | undefined;
 
-    // `value` is our original array when the drag stays in-process.
-    // If VS Code serialized it across the IPC boundary it comes back as a
-    // JSON string; handle both cases.
-    let droppedNodes: PyClassNode[];
-    const raw = transferItem.value;
-    if (Array.isArray(raw)) {
-      droppedNodes = raw as PyClassNode[];
-    } else if (typeof raw === 'string') {
-      try {
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) { return; }
-        droppedNodes = parsed as PyClassNode[];
-      } catch { return; }
-    } else {
-      return;
+    const treeItem = dataTransfer.get(TREE_MIME);
+    if (treeItem && Array.isArray(treeItem.value)) {
+      droppedNodes = (treeItem.value as PyClassNode[]).filter(
+        n =>
+          n.nodeType === 'folder' ||
+          n.nodeType === 'class' ||
+          n.nodeType === 'function' ||
+          n.nodeType === 'global'
+      );
     }
 
-    if (droppedNodes.length === 0) { return; }
+    // Custom MIME fallback (covers edge-cases where the tree MIME is absent)
+    if (!droppedNodes || droppedNodes.length === 0) {
+      const customItem = dataTransfer.get(DRAG_MIME);
+      if (customItem) {
+        const raw = customItem.value;
+        if (Array.isArray(raw)) {
+          droppedNodes = raw as PyClassNode[];
+        } else if (typeof raw === 'string') {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) { droppedNodes = parsed as PyClassNode[]; }
+          } catch { /* ignore */ }
+        }
+      }
+    }
+
+    if (!droppedNodes || droppedNodes.length === 0) { return; }
 
     // Determine target folder ID (null → root / unassigned)
     let targetFolderId: string | null = null;
