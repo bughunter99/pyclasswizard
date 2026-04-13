@@ -115,8 +115,12 @@ export class PyClassTreeProvider
 
   private rootNodes: PyClassNode[] = [];
   private fileWatcher: vscode.FileSystemWatcher | undefined;
-  /** Nodes currently being dragged; populated in handleDrag, consumed in handleDrop. */
-  private _pendingDrag: PyClassNode[] = [];
+  /**
+   * Maps node `id` → PyClassNode for every node in the current tree.
+   * Used in handleDrop to look up dragged nodes by the IDs stored in DataTransfer.
+   * Rebuilt on every buildTree() call.
+   */
+  private _nodeById = new Map<string, PyClassNode>();
   /**
    * Maps each node's `id` to its parent node.
    * Root-level nodes are NOT present in this map (getParent returns undefined for them).
@@ -185,22 +189,22 @@ export class PyClassTreeProvider
     dataTransfer: vscode.DataTransfer,
     _token: vscode.CancellationToken
   ): void {
-    // Clear stale state from any previously cancelled drag
-    this._pendingDrag = [];
-    // Only top-level items (not methods / member variables inside a class) may be dragged
-    const draggable = source.filter(
+    // Only top-level items (not methods / member variables inside a class) may be dragged.
+    const movable = source.filter(
       n =>
-        n.nodeType === 'folder' ||
-        n.nodeType === 'class' ||
-        n.nodeType === 'function' ||
-        n.nodeType === 'global'
+        n.id !== undefined &&
+        (n.nodeType === 'folder' ||
+          n.nodeType === 'class' ||
+          n.nodeType === 'function' ||
+          n.nodeType === 'global')
     );
-    if (draggable.length === 0) { return; }
-    // Store in instance variable — most reliable mechanism for same-extension DnD
-    // because it bypasses any DataTransfer serialization that VS Code may apply.
-    this._pendingDrag = draggable;
-    // Also set the MIME so VS Code recognises this as a valid drag source.
-    dataTransfer.set(DRAG_MIME, new vscode.DataTransferItem(draggable));
+    if (movable.length === 0) { return; }
+
+    // Store node IDs as a plain JSON string.  Plain strings always survive the
+    // DataTransfer serialization that VS Code performs between the drag-start
+    // (handleDrag) and drop (handleDrop) phases — unlike raw object references.
+    const ids = movable.map(n => n.id!);
+    dataTransfer.set(DRAG_MIME, new vscode.DataTransferItem(JSON.stringify(ids)));
   }
 
   async handleDrop(
@@ -208,44 +212,32 @@ export class PyClassTreeProvider
     dataTransfer: vscode.DataTransfer,
     _token: vscode.CancellationToken
   ): Promise<void> {
-    // --- Primary: use the instance-variable set in handleDrag --------------------
-    // This is the most reliable approach because it avoids any DataTransfer
-    // serialization issues (same process / same extension host).
+    // Retrieve the node IDs we stored in handleDrag.
+    const dragItem = dataTransfer.get(DRAG_MIME);
+    if (!dragItem) { return; }
+
+    let ids: string[] = [];
+    const raw = dragItem.value;
+    if (typeof raw === 'string') {
+      try { ids = JSON.parse(raw) as string[]; } catch { return; }
+    } else if (Array.isArray(raw)) {
+      // Value survived as a live array — extract the id strings.
+      ids = (raw as Array<unknown>)
+        .map(v => (typeof v === 'string' ? v : (v as PyClassNode)?.id))
+        .filter((v): v is string => typeof v === 'string');
+    }
+    if (ids.length === 0) { return; }
+
+    // Look up the actual PyClassNode instances from our ID map.
     const isMovable = (n: PyClassNode) =>
       n.nodeType === 'folder' ||
       n.nodeType === 'class' ||
       n.nodeType === 'function' ||
       n.nodeType === 'global';
 
-    let droppedNodes: PyClassNode[] = this._pendingDrag.filter(isMovable);
-    this._pendingDrag = []; // consume immediately
-
-    // --- Fallback 1: our custom MIME (same-host; value may survive as object) ----
-    if (droppedNodes.length === 0) {
-      const customItem = dataTransfer.get(DRAG_MIME);
-      if (customItem) {
-        const raw = customItem.value;
-        if (Array.isArray(raw)) {
-          droppedNodes = (raw as PyClassNode[]).filter(isMovable);
-        } else if (typeof raw === 'string') {
-          try {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) { droppedNodes = (parsed as PyClassNode[]).filter(isMovable); }
-          } catch { /* ignore */ }
-        }
-      }
-    }
-
-    // --- Fallback 2: VS Code built-in tree MIME ----------------------------------
-    if (droppedNodes.length === 0) {
-      const treeItem = dataTransfer.get(TREE_MIME);
-      if (treeItem) {
-        const val = treeItem.value;
-        if (Array.isArray(val)) {
-          droppedNodes = (val as PyClassNode[]).filter(isMovable);
-        }
-      }
-    }
+    const droppedNodes = ids
+      .map(id => this._nodeById.get(id))
+      .filter((n): n is PyClassNode => n !== undefined && isMovable(n));
 
     if (droppedNodes.length === 0) { return; }
 
@@ -479,10 +471,10 @@ export class PyClassTreeProvider
     // Order: folders (A-Z) → classes (A-Z) → functions (A-Z) → globals (A-Z)
     const result = [...topFolderNodes, ...unassignedClasses, ...unassignedFunctions, ...unassignedVars];
 
-    // Rebuild parent map so that getParent() works correctly.
-    // VS Code requires getParent() for drag-and-drop to function.
+    // Rebuild node maps: _parentMap (for getParent) and _nodeById (for DnD).
     this._parentMap.clear();
-    this.registerParents(result, undefined);
+    this._nodeById.clear();
+    this.registerNodes(result, undefined);
     return result;
   }
 
@@ -515,21 +507,26 @@ export class PyClassTreeProvider
   }
 
   // ---------------------------------------------------------------------------
-  // Parent map — required for drag-and-drop (getParent must work)
+  // Node maps — required for drag-and-drop (getParent + nodeById)
   // ---------------------------------------------------------------------------
 
   /**
-   * Recursively registers parent relationships for all nodes in the tree.
-   * Root-level nodes (parent === undefined) are NOT added to the map;
-   * getParent() returns undefined for unknown IDs, which is correct for roots.
+   * Recursively registers every node into:
+   *  - _parentMap: node.id → parent (for getParent())
+   *  - _nodeById:  node.id → node   (for handleDrop() ID-based lookup)
+   * Root-level nodes are absent from _parentMap; getParent() correctly
+   * returns undefined for them (Map.get returns undefined for missing keys).
    */
-  private registerParents(nodes: PyClassNode[], parent: PyClassNode | undefined): void {
+  private registerNodes(nodes: PyClassNode[], parent: PyClassNode | undefined): void {
     for (const node of nodes) {
-      if (node.id && parent !== undefined) {
-        this._parentMap.set(node.id, parent);
+      if (node.id) {
+        if (parent !== undefined) {
+          this._parentMap.set(node.id, parent);
+        }
+        this._nodeById.set(node.id, node);
       }
       if (node.children.length > 0) {
-        this.registerParents(node.children, node);
+        this.registerNodes(node.children, node);
       }
     }
   }
