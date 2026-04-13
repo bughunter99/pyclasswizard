@@ -171,34 +171,38 @@ class PyClassTreeProvider {
         dataTransfer.set(DRAG_MIME, new vscode.DataTransferItem(draggable));
     }
     async handleDrop(target, dataTransfer, _token) {
-        // Prefer VS Code's built-in tree MIME: for same-tree drops VS Code sets
-        // its value to the actual PyClassNode[] that were dragged, which is the
-        // most reliable source.  Fall back to our own custom MIME payload.
+        // Prefer our own custom MIME: it carries the live PyClassNode[] objects
+        // that we set in handleDrag, so symbolKey / folderId are always present.
+        // Fall back to VS Code's built-in tree MIME (also carries the items for
+        // same-tree drags, but ordering here makes the behaviour more predictable).
         let droppedNodes;
-        const treeItem = dataTransfer.get(TREE_MIME);
-        if (treeItem && Array.isArray(treeItem.value)) {
-            droppedNodes = treeItem.value.filter(n => n.nodeType === 'folder' ||
-                n.nodeType === 'class' ||
-                n.nodeType === 'function' ||
-                n.nodeType === 'global');
-        }
-        // Custom MIME fallback (covers edge-cases where the tree MIME is absent)
-        if (!droppedNodes || droppedNodes.length === 0) {
-            const customItem = dataTransfer.get(DRAG_MIME);
-            if (customItem) {
-                const raw = customItem.value;
-                if (Array.isArray(raw)) {
-                    droppedNodes = raw;
-                }
-                else if (typeof raw === 'string') {
-                    try {
-                        const parsed = JSON.parse(raw);
-                        if (Array.isArray(parsed)) {
-                            droppedNodes = parsed;
-                        }
+        const customItem = dataTransfer.get(DRAG_MIME);
+        if (customItem) {
+            const raw = customItem.value;
+            if (Array.isArray(raw)) {
+                droppedNodes = raw.filter(n => n.nodeType === 'folder' ||
+                    n.nodeType === 'class' ||
+                    n.nodeType === 'function' ||
+                    n.nodeType === 'global');
+            }
+            else if (typeof raw === 'string') {
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed)) {
+                        droppedNodes = parsed;
                     }
-                    catch { /* ignore */ }
                 }
+                catch { /* ignore */ }
+            }
+        }
+        // VS Code's built-in tree MIME fallback
+        if (!droppedNodes || droppedNodes.length === 0) {
+            const treeItem = dataTransfer.get(TREE_MIME);
+            if (treeItem && Array.isArray(treeItem.value)) {
+                droppedNodes = treeItem.value.filter(n => n.nodeType === 'folder' ||
+                    n.nodeType === 'class' ||
+                    n.nodeType === 'function' ||
+                    n.nodeType === 'global');
             }
         }
         if (!droppedNodes || droppedNodes.length === 0) {

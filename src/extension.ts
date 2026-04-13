@@ -154,6 +154,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
       // Build a flat, indented list of folders ordered depth-first
       const items: Array<{ label: string; folderId: string | null }> = [];
+      // Always offer "move to top level" first so it is easy to reach
+      items.push({ label: '$(arrow-up) Move to Top Level (no folder)', folderId: null });
       const addFolder = (folderId: string | null, indent: string) => {
         const children = folders
           .filter(f => f.parentId === folderId)
@@ -164,7 +166,6 @@ export function activate(context: vscode.ExtensionContext): void {
         }
       };
       addFolder(null, '');
-      items.push({ label: '$(close) Move to Root (no folder)', folderId: null });
 
       const picked = await vscode.window.showQuickPick(
         items.map(i => i.label),

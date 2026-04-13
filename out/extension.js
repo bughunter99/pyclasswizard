@@ -160,6 +160,8 @@ function activate(context) {
         }
         // Build a flat, indented list of folders ordered depth-first
         const items = [];
+        // Always offer "move to top level" first so it is easy to reach
+        items.push({ label: '$(arrow-up) Move to Top Level (no folder)', folderId: null });
         const addFolder = (folderId, indent) => {
             const children = folders
                 .filter(f => f.parentId === folderId)
@@ -170,7 +172,6 @@ function activate(context) {
             }
         };
         addFolder(null, '');
-        items.push({ label: '$(close) Move to Root (no folder)', folderId: null });
         const picked = await vscode.window.showQuickPick(items.map(i => i.label), {
             placeHolder: `Move ${movable.length === 1 ? `"${movable[0].label}"` : `${movable.length} items`} to…`,
             canPickMany: false,
