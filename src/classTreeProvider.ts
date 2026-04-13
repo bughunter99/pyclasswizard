@@ -12,7 +12,7 @@ export type NodeType =
   | 'root' | 'file' | 'class' | 'method' | 'variable'
   | 'global' | 'function' | 'folder';
 
-const DRAG_MIME = 'application/vnd.code.tree.pyclasswizard.classview';
+const DRAG_MIME = 'application/pyclasswizard-dnd';
 
 /** Stable key that identifies a top-level symbol for CLW persistence. */
 function makeSymbolKey(filePath: string, kind: string, name: string): string {
@@ -112,6 +112,9 @@ export class PyClassTreeProvider
   private fileWatcher: vscode.FileSystemWatcher | undefined;
 
   // TreeDragAndDropController ------------------------------------------------
+  // Use a private custom MIME for the payload.  VS Code auto-manages the
+  // 'application/vnd.code.tree.*' namespace and would overwrite anything we
+  // store there, so we keep our data under a separate key.
   readonly dragMimeTypes: readonly string[] = [DRAG_MIME];
   readonly dropMimeTypes: readonly string[] = [DRAG_MIME];
 
@@ -179,8 +182,25 @@ export class PyClassTreeProvider
   ): Promise<void> {
     const transferItem = dataTransfer.get(DRAG_MIME);
     if (!transferItem) { return; }
-    const droppedNodes: PyClassNode[] = transferItem.value as PyClassNode[];
-    if (!Array.isArray(droppedNodes) || droppedNodes.length === 0) { return; }
+
+    // `value` is our original array when the drag stays in-process.
+    // If VS Code serialized it across the IPC boundary it comes back as a
+    // JSON string; handle both cases.
+    let droppedNodes: PyClassNode[];
+    const raw = transferItem.value;
+    if (Array.isArray(raw)) {
+      droppedNodes = raw as PyClassNode[];
+    } else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) { return; }
+        droppedNodes = parsed as PyClassNode[];
+      } catch { return; }
+    } else {
+      return;
+    }
+
+    if (droppedNodes.length === 0) { return; }
 
     // Determine target folder ID (null → root / unassigned)
     let targetFolderId: string | null = null;

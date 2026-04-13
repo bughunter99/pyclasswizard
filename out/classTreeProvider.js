@@ -38,7 +38,7 @@ const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const pythonParser_1 = require("./pythonParser");
-const DRAG_MIME = 'application/vnd.code.tree.pyclasswizard.classview';
+const DRAG_MIME = 'application/pyclasswizard-dnd';
 /** Stable key that identifies a top-level symbol for CLW persistence. */
 function makeSymbolKey(filePath, kind, name) {
     return `${filePath}::${kind}::${name}`;
@@ -122,6 +122,9 @@ class PyClassTreeProvider {
         this.onDidChangeTreeData = this._onDidChangeTreeData.event;
         this.rootNodes = [];
         // TreeDragAndDropController ------------------------------------------------
+        // Use a private custom MIME for the payload.  VS Code auto-manages the
+        // 'application/vnd.code.tree.*' namespace and would overwrite anything we
+        // store there, so we keep our data under a separate key.
         this.dragMimeTypes = [DRAG_MIME];
         this.dropMimeTypes = [DRAG_MIME];
         this.setupFileWatcher();
@@ -169,8 +172,30 @@ class PyClassTreeProvider {
         if (!transferItem) {
             return;
         }
-        const droppedNodes = transferItem.value;
-        if (!Array.isArray(droppedNodes) || droppedNodes.length === 0) {
+        // `value` is our original array when the drag stays in-process.
+        // If VS Code serialized it across the IPC boundary it comes back as a
+        // JSON string; handle both cases.
+        let droppedNodes;
+        const raw = transferItem.value;
+        if (Array.isArray(raw)) {
+            droppedNodes = raw;
+        }
+        else if (typeof raw === 'string') {
+            try {
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) {
+                    return;
+                }
+                droppedNodes = parsed;
+            }
+            catch {
+                return;
+            }
+        }
+        else {
+            return;
+        }
+        if (droppedNodes.length === 0) {
             return;
         }
         // Determine target folder ID (null → root / unassigned)
