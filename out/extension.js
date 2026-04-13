@@ -142,6 +142,53 @@ function activate(context) {
         clwStore.deleteFolder(node.folderId);
         provider.refresh();
     });
+    const moveToFolderCmd = vscode.commands.registerCommand('pyclasswizard.moveToFolder', async (clickedNode, allSelectedNodes) => {
+        // Gather the nodes to move: multi-select gives allSelectedNodes as the
+        // second argument; fall back to just the right-clicked node.
+        const candidates = (allSelectedNodes && allSelectedNodes.length > 0)
+            ? allSelectedNodes
+            : clickedNode ? [clickedNode] : [];
+        const movable = candidates.filter(n => (n.nodeType === 'class' || n.nodeType === 'function' || n.nodeType === 'global') &&
+            n.symbolKey !== undefined);
+        if (movable.length === 0) {
+            return;
+        }
+        const folders = clwStore.getFolders();
+        if (folders.length === 0) {
+            vscode.window.showInformationMessage('No folders exist yet. Use the "New Folder" button to create one first.');
+            return;
+        }
+        // Build a flat, indented list of folders ordered depth-first
+        const items = [];
+        const addFolder = (folderId, indent) => {
+            const children = folders
+                .filter(f => f.parentId === folderId)
+                .sort((a, b) => a.name.localeCompare(b.name));
+            for (const f of children) {
+                items.push({ label: `${indent}$(folder) ${f.name}`, folderId: f.id });
+                addFolder(f.id, indent + '    ');
+            }
+        };
+        addFolder(null, '');
+        items.push({ label: '$(close) Move to Root (no folder)', folderId: null });
+        const picked = await vscode.window.showQuickPick(items.map(i => i.label), {
+            placeHolder: `Move ${movable.length === 1 ? `"${movable[0].label}"` : `${movable.length} items`} to…`,
+            canPickMany: false,
+        });
+        if (picked === undefined) {
+            return;
+        }
+        const chosenItem = items.find(i => i.label === picked);
+        for (const node of movable) {
+            if (chosenItem.folderId !== null) {
+                clwStore.assignToFolder(node.symbolKey, chosenItem.folderId);
+            }
+            else {
+                clwStore.removeFromFolder(node.symbolKey);
+            }
+        }
+        provider.refresh();
+    });
     // ---------------------------------------------------------------------------
     // Auto-refresh when workspace changes or active editor changes
     // ---------------------------------------------------------------------------
@@ -166,7 +213,7 @@ function activate(context) {
     // Initial refresh
     // ---------------------------------------------------------------------------
     provider.refresh();
-    context.subscriptions.push(treeView, provider, refreshCmd, collapseAllCmd, goToDefinitionCmd, navigateToSourceCmd, newFolderCmd, renameFolderCmd, deleteFolderCmd, configChangeListener, workspaceFolderListener, activeEditorListener);
+    context.subscriptions.push(treeView, provider, refreshCmd, collapseAllCmd, goToDefinitionCmd, navigateToSourceCmd, newFolderCmd, renameFolderCmd, deleteFolderCmd, moveToFolderCmd, configChangeListener, workspaceFolderListener, activeEditorListener);
 }
 function deactivate() {
     // Nothing to clean up beyond subscriptions

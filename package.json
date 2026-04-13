@@ -98,6 +98,11 @@
         "command": "pyclasswizard.deleteFolder",
         "title": "Delete Folder",
         "category": "PyClassWizard"
+      },
+      {
+        "command": "pyclasswizard.moveToFolder",
+        "title": "Move to Folder…",
+        "category": "PyClassWizard"
       }
     ],
     "keybindings": [
@@ -145,6 +150,11 @@
           "command": "pyclasswizard.deleteFolder",
           "when": "view == pyclasswizard.classView && viewItem == pyFolder",
           "group": "1_folder@3"
+        },
+        {
+          "command": "pyclasswizard.moveToFolder",
+          "when": "view == pyclasswizard.classView && (viewItem == pyClass || viewItem == pyFunction || viewItem == pyGlobal)",
+          "group": "1_folder@4"
         }
       ]
     },
