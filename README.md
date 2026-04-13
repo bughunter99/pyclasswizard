@@ -51,3 +51,4 @@ npm run package   # produces pyclasswizard-0.1.0.vsix
 |---|---|
 | 2026-04-13T09:57:40.784Z | Fix drag-and-drop: add required `getParent()`, fix `TREE_MIME` case |
 | 2026-04-13T10:11:34.394Z | Fix drag-and-drop: replace `_pendingDrag` with ID-based `DataTransfer` + `_nodeById` map to survive VS Code's DataTransfer serialization |
+| 2026-04-13T10:40:31.494Z | Auto "Globals" virtual folder: unassigned functions+variables placed there by default, always last (user folders → classes → Globals) |

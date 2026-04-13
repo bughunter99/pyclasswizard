@@ -10,7 +10,9 @@ import { ClwStore, ClwFolder } from './clwStore';
 
 export type NodeType =
   | 'root' | 'file' | 'class' | 'method' | 'variable'
-  | 'global' | 'function' | 'folder';
+  | 'global' | 'function' | 'folder'
+  /** Virtual "Globals" folder – auto-generated, not persisted in the CLW store. */
+  | 'globalsFolder';
 
 const DRAG_MIME = 'application/pyclasswizard-dnd';
 // VS Code automatically adds this built-in MIME for same-tree drags.
@@ -46,6 +48,11 @@ export class PyClassNode extends vscode.TreeItem {
     super(label, collapsibleState);
 
     switch (nodeType) {
+      case 'globalsFolder':
+        this.iconPath = new vscode.ThemeIcon('symbol-namespace');
+        this.tooltip = 'Global functions and variables';
+        this.contextValue = 'pyGlobalsFolder';
+        break;
       case 'folder':
         this.iconPath = new vscode.ThemeIcon('folder');
         this.tooltip = label;
@@ -246,6 +253,10 @@ export class PyClassTreeProvider
     if (target) {
       if (target.nodeType === 'folder') {
         targetFolderId = target.folderId;
+      } else if (target.nodeType === 'globalsFolder') {
+        // Dropping onto the virtual Globals folder removes the user-folder assignment
+        // so that the symbol re-appears in Globals automatically.
+        targetFolderId = null;
       } else if (target.symbolKey !== undefined) {
         // Drop onto a symbol → place alongside it (same folder or root)
         targetFolderId = this.clwStore.getAssignment(target.symbolKey) ?? null;
@@ -463,13 +474,34 @@ export class PyClassTreeProvider
       .map(buildFolderNode)
       .sort((a, b) => (a.label as string).localeCompare(b.label as string));
 
-    // Unassigned symbol nodes (not placed in any folder)
+    // Unassigned symbol nodes (not placed in any user-created folder)
     const unassignedClasses = classNodes.filter(n => !allAssignedKeys.has(n.symbolKey ?? ''));
     const unassignedFunctions = functionNodes.filter(n => !allAssignedKeys.has(n.symbolKey ?? ''));
     const unassignedVars = varNodes.filter(n => !allAssignedKeys.has(n.symbolKey ?? ''));
 
-    // Order: folders (A-Z) → classes (A-Z) → functions (A-Z) → globals (A-Z)
-    const result = [...topFolderNodes, ...unassignedClasses, ...unassignedFunctions, ...unassignedVars];
+    // Build the virtual "Globals" folder (always last, like VS6 ClassWizard).
+    // It contains all unassigned functions (A-Z) then unassigned globals (A-Z).
+    // If there are no global symbols at all, omit the folder entirely.
+    const globalsChildren = [...unassignedFunctions, ...unassignedVars];
+    let globalsNode: PyClassNode | undefined;
+    if (globalsChildren.length > 0) {
+      globalsNode = new PyClassNode(
+        null,
+        'globalsFolder',
+        'Globals',
+        '',
+        globalsChildren,
+        vscode.TreeItemCollapsibleState.Collapsed
+      );
+      globalsNode.id = 'folder::__globals__';
+    }
+
+    // Order: user folders (A-Z) → classes (A-Z) → Globals (fixed at end)
+    const result: PyClassNode[] = [
+      ...topFolderNodes,
+      ...unassignedClasses,
+      ...(globalsNode ? [globalsNode] : []),
+    ];
 
     // Rebuild node maps: _parentMap (for getParent) and _nodeById (for DnD).
     this._parentMap.clear();
