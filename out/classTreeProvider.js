@@ -222,7 +222,16 @@ class PyClassTreeProvider {
         return [...classNodes, ...functionNodes, ...varNodes];
     }
     symbolsToNodes(symbols, filePath) {
-        return symbols.map((sym) => {
+        // Sort: methods first (A→Z), then variables/globals (A→Z)
+        const sorted = [...symbols].sort((a, b) => {
+            const rankA = a.kind === 'method' ? 0 : 1;
+            const rankB = b.kind === 'method' ? 0 : 1;
+            if (rankA !== rankB) {
+                return rankA - rankB;
+            }
+            return a.name.localeCompare(b.name);
+        });
+        return sorted.map((sym) => {
             const childNodes = this.symbolsToNodes(sym.children, filePath);
             const collapsible = childNodes.length > 0
                 ? vscode.TreeItemCollapsibleState.Collapsed
