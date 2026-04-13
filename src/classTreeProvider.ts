@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as path from 'path';
 import { parsePythonSource, PySymbol } from './pythonParser';
 
 // ---------------------------------------------------------------------------
@@ -124,9 +125,10 @@ export class PyClassTreeProvider implements vscode.TreeDataProvider<PyClassNode>
     const pyFiles = await vscode.workspace.findFiles('**/*.py', excludePatterns.length ? excludeGlob : undefined);
     pyFiles.sort((a, b) => a.fsPath.localeCompare(b.fsPath));
 
-    // Class nodes come first; globals from classless files are appended after
-    const classNodes: PyClassNode[] = [];
-    const globalNodes: PyClassNode[] = [];
+    // Collect raw symbol data from all files
+    const allClassData: Array<{ sym: PySymbol; filePath: string }> = [];
+    const allFunctionData: Array<{ sym: PySymbol; filePath: string }> = [];
+    const allVarData: Array<{ sym: PySymbol; filePath: string }> = [];
 
     for (const fileUri of pyFiles) {
       try {
@@ -138,27 +140,18 @@ export class PyClassTreeProvider implements vscode.TreeDataProvider<PyClassNode>
         const fileClasses = symbols.filter((s) => s.kind === 'class');
         const fileNonClasses = symbols.filter((s) => s.kind !== 'class');
 
-        // Each class becomes a root node directly (no file wrapper)
         for (const sym of fileClasses) {
-          const childNodes = this.symbolsToNodes(sym.children, fileUri.fsPath);
-          const collapsible = childNodes.length > 0
-            ? vscode.TreeItemCollapsibleState.Collapsed
-            : vscode.TreeItemCollapsibleState.None;
-          classNodes.push(new PyClassNode(sym, 'class', sym.name, fileUri.fsPath, childNodes, collapsible, sym.detail));
+          allClassData.push({ sym, filePath: fileUri.fsPath });
         }
 
         // Files with no classes: expose their global functions/variables at root
         if (fileClasses.length === 0) {
           for (const sym of fileNonClasses) {
-            globalNodes.push(new PyClassNode(
-              sym,
-              sym.kind === 'global' ? 'global' : sym.kind,
-              sym.name,
-              fileUri.fsPath,
-              [],
-              vscode.TreeItemCollapsibleState.None,
-              sym.detail,
-            ));
+            if (sym.kind === 'function') {
+              allFunctionData.push({ sym, filePath: fileUri.fsPath });
+            } else {
+              allVarData.push({ sym, filePath: fileUri.fsPath });
+            }
           }
         }
       } catch (_err) {
@@ -166,7 +159,60 @@ export class PyClassTreeProvider implements vscode.TreeDataProvider<PyClassNode>
       }
     }
 
-    return [...classNodes, ...globalNodes];
+    // Sort each group alphabetically
+    allClassData.sort((a, b) => a.sym.name.localeCompare(b.sym.name));
+    allFunctionData.sort((a, b) => a.sym.name.localeCompare(b.sym.name));
+    allVarData.sort((a, b) => a.sym.name.localeCompare(b.sym.name));
+
+    // Count occurrences of each name within each group for duplicate detection
+    const countNames = (data: Array<{ sym: PySymbol }>): Map<string, number> => {
+      const counts = new Map<string, number>();
+      for (const { sym } of data) {
+        counts.set(sym.name, (counts.get(sym.name) ?? 0) + 1);
+      }
+      return counts;
+    };
+
+    const classCounts = countNames(allClassData);
+    const functionCounts = countNames(allFunctionData);
+    const varCounts = countNames(allVarData);
+
+    // Build label: append (filename) for the 2nd and later occurrences of the same name
+    const makeLabel = (name: string, filePath: string, seen: Map<string, number>, counts: Map<string, number>): string => {
+      const seenCount = seen.get(name) ?? 0;
+      seen.set(name, seenCount + 1);
+      return seenCount > 0 && (counts.get(name) ?? 0) > 1
+        ? `${name} (${path.basename(filePath)})`
+        : name;
+    };
+
+    // Build class nodes
+    const seenClassNames = new Map<string, number>();
+    const classNodes: PyClassNode[] = allClassData.map(({ sym, filePath }) => {
+      const label = makeLabel(sym.name, filePath, seenClassNames, classCounts);
+      const childNodes = this.symbolsToNodes(sym.children, filePath);
+      const collapsible = childNodes.length > 0
+        ? vscode.TreeItemCollapsibleState.Collapsed
+        : vscode.TreeItemCollapsibleState.None;
+      return new PyClassNode(sym, 'class', label, filePath, childNodes, collapsible, sym.detail);
+    });
+
+    // Build global function nodes
+    const seenFunctionNames = new Map<string, number>();
+    const functionNodes: PyClassNode[] = allFunctionData.map(({ sym, filePath }) => {
+      const label = makeLabel(sym.name, filePath, seenFunctionNames, functionCounts);
+      return new PyClassNode(sym, 'function', label, filePath, [], vscode.TreeItemCollapsibleState.None, sym.detail);
+    });
+
+    // Build global variable nodes
+    const seenVarNames = new Map<string, number>();
+    const varNodes: PyClassNode[] = allVarData.map(({ sym, filePath }) => {
+      const label = makeLabel(sym.name, filePath, seenVarNames, varCounts);
+      return new PyClassNode(sym, 'global', label, filePath, [], vscode.TreeItemCollapsibleState.None, sym.detail);
+    });
+
+    // Order: classes → global functions → global variables (each group sorted alphabetically)
+    return [...classNodes, ...functionNodes, ...varNodes];
   }
 
   private symbolsToNodes(symbols: PySymbol[], filePath: string): PyClassNode[] {
