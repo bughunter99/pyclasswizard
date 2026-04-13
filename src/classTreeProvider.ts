@@ -113,6 +113,8 @@ export class PyClassTreeProvider
 
   private rootNodes: PyClassNode[] = [];
   private fileWatcher: vscode.FileSystemWatcher | undefined;
+  /** Nodes currently being dragged; populated in handleDrag, consumed in handleDrop. */
+  private _pendingDrag: PyClassNode[] = [];
 
   // TreeDragAndDropController ------------------------------------------------
   // DRAG_MIME carries our node payload; TREE_MIME is VS Code's built-in
@@ -166,6 +168,8 @@ export class PyClassTreeProvider
     dataTransfer: vscode.DataTransfer,
     _token: vscode.CancellationToken
   ): void {
+    // Clear stale state from any previously cancelled drag
+    this._pendingDrag = [];
     // Only top-level items (not methods / member variables inside a class) may be dragged
     const draggable = source.filter(
       n =>
@@ -175,6 +179,10 @@ export class PyClassTreeProvider
         n.nodeType === 'global'
     );
     if (draggable.length === 0) { return; }
+    // Store in instance variable — most reliable mechanism for same-extension DnD
+    // because it bypasses any DataTransfer serialization that VS Code may apply.
+    this._pendingDrag = draggable;
+    // Also set the MIME so VS Code recognises this as a valid drag source.
     dataTransfer.set(DRAG_MIME, new vscode.DataTransferItem(draggable));
   }
 
@@ -183,46 +191,46 @@ export class PyClassTreeProvider
     dataTransfer: vscode.DataTransfer,
     _token: vscode.CancellationToken
   ): Promise<void> {
-    // Prefer our own custom MIME: it carries the live PyClassNode[] objects
-    // that we set in handleDrag, so symbolKey / folderId are always present.
-    // Fall back to VS Code's built-in tree MIME (also carries the items for
-    // same-tree drags, but ordering here makes the behaviour more predictable).
-    let droppedNodes: PyClassNode[] | undefined;
+    // --- Primary: use the instance-variable set in handleDrag --------------------
+    // This is the most reliable approach because it avoids any DataTransfer
+    // serialization issues (same process / same extension host).
+    const isMovable = (n: PyClassNode) =>
+      n.nodeType === 'folder' ||
+      n.nodeType === 'class' ||
+      n.nodeType === 'function' ||
+      n.nodeType === 'global';
 
-    const customItem = dataTransfer.get(DRAG_MIME);
-    if (customItem) {
-      const raw = customItem.value;
-      if (Array.isArray(raw)) {
-        droppedNodes = (raw as PyClassNode[]).filter(
-          n =>
-            n.nodeType === 'folder' ||
-            n.nodeType === 'class' ||
-            n.nodeType === 'function' ||
-            n.nodeType === 'global'
-        );
-      } else if (typeof raw === 'string') {
-        try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) { droppedNodes = parsed as PyClassNode[]; }
-        } catch { /* ignore */ }
+    let droppedNodes: PyClassNode[] = this._pendingDrag.filter(isMovable);
+    this._pendingDrag = []; // consume immediately
+
+    // --- Fallback 1: our custom MIME (same-host; value may survive as object) ----
+    if (droppedNodes.length === 0) {
+      const customItem = dataTransfer.get(DRAG_MIME);
+      if (customItem) {
+        const raw = customItem.value;
+        if (Array.isArray(raw)) {
+          droppedNodes = (raw as PyClassNode[]).filter(isMovable);
+        } else if (typeof raw === 'string') {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) { droppedNodes = (parsed as PyClassNode[]).filter(isMovable); }
+          } catch { /* ignore */ }
+        }
       }
     }
 
-    // VS Code's built-in tree MIME fallback
-    if (!droppedNodes || droppedNodes.length === 0) {
+    // --- Fallback 2: VS Code built-in tree MIME ----------------------------------
+    if (droppedNodes.length === 0) {
       const treeItem = dataTransfer.get(TREE_MIME);
-      if (treeItem && Array.isArray(treeItem.value)) {
-        droppedNodes = (treeItem.value as PyClassNode[]).filter(
-          n =>
-            n.nodeType === 'folder' ||
-            n.nodeType === 'class' ||
-            n.nodeType === 'function' ||
-            n.nodeType === 'global'
-        );
+      if (treeItem) {
+        const val = treeItem.value;
+        if (Array.isArray(val)) {
+          droppedNodes = (val as PyClassNode[]).filter(isMovable);
+        }
       }
     }
 
-    if (!droppedNodes || droppedNodes.length === 0) { return; }
+    if (droppedNodes.length === 0) { return; }
 
     // Determine target folder ID (null → root / unassigned)
     let targetFolderId: string | null = null;

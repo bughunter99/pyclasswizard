@@ -124,6 +124,8 @@ class PyClassTreeProvider {
         this._onDidChangeTreeData = new vscode.EventEmitter();
         this.onDidChangeTreeData = this._onDidChangeTreeData.event;
         this.rootNodes = [];
+        /** Nodes currently being dragged; populated in handleDrag, consumed in handleDrop. */
+        this._pendingDrag = [];
         // TreeDragAndDropController ------------------------------------------------
         // DRAG_MIME carries our node payload; TREE_MIME is VS Code's built-in
         // same-tree type and MUST appear in dropMimeTypes so that VS Code actually
@@ -160,6 +162,8 @@ class PyClassTreeProvider {
     // Drag and Drop
     // ---------------------------------------------------------------------------
     handleDrag(source, dataTransfer, _token) {
+        // Clear stale state from any previously cancelled drag
+        this._pendingDrag = [];
         // Only top-level items (not methods / member variables inside a class) may be dragged
         const draggable = source.filter(n => n.nodeType === 'folder' ||
             n.nodeType === 'class' ||
@@ -168,44 +172,52 @@ class PyClassTreeProvider {
         if (draggable.length === 0) {
             return;
         }
+        // Store in instance variable — most reliable mechanism for same-extension DnD
+        // because it bypasses any DataTransfer serialization that VS Code may apply.
+        this._pendingDrag = draggable;
+        // Also set the MIME so VS Code recognises this as a valid drag source.
         dataTransfer.set(DRAG_MIME, new vscode.DataTransferItem(draggable));
     }
     async handleDrop(target, dataTransfer, _token) {
-        // Prefer our own custom MIME: it carries the live PyClassNode[] objects
-        // that we set in handleDrag, so symbolKey / folderId are always present.
-        // Fall back to VS Code's built-in tree MIME (also carries the items for
-        // same-tree drags, but ordering here makes the behaviour more predictable).
-        let droppedNodes;
-        const customItem = dataTransfer.get(DRAG_MIME);
-        if (customItem) {
-            const raw = customItem.value;
-            if (Array.isArray(raw)) {
-                droppedNodes = raw.filter(n => n.nodeType === 'folder' ||
-                    n.nodeType === 'class' ||
-                    n.nodeType === 'function' ||
-                    n.nodeType === 'global');
-            }
-            else if (typeof raw === 'string') {
-                try {
-                    const parsed = JSON.parse(raw);
-                    if (Array.isArray(parsed)) {
-                        droppedNodes = parsed;
-                    }
+        // --- Primary: use the instance-variable set in handleDrag --------------------
+        // This is the most reliable approach because it avoids any DataTransfer
+        // serialization issues (same process / same extension host).
+        const isMovable = (n) => n.nodeType === 'folder' ||
+            n.nodeType === 'class' ||
+            n.nodeType === 'function' ||
+            n.nodeType === 'global';
+        let droppedNodes = this._pendingDrag.filter(isMovable);
+        this._pendingDrag = []; // consume immediately
+        // --- Fallback 1: our custom MIME (same-host; value may survive as object) ----
+        if (droppedNodes.length === 0) {
+            const customItem = dataTransfer.get(DRAG_MIME);
+            if (customItem) {
+                const raw = customItem.value;
+                if (Array.isArray(raw)) {
+                    droppedNodes = raw.filter(isMovable);
                 }
-                catch { /* ignore */ }
+                else if (typeof raw === 'string') {
+                    try {
+                        const parsed = JSON.parse(raw);
+                        if (Array.isArray(parsed)) {
+                            droppedNodes = parsed.filter(isMovable);
+                        }
+                    }
+                    catch { /* ignore */ }
+                }
             }
         }
-        // VS Code's built-in tree MIME fallback
-        if (!droppedNodes || droppedNodes.length === 0) {
+        // --- Fallback 2: VS Code built-in tree MIME ----------------------------------
+        if (droppedNodes.length === 0) {
             const treeItem = dataTransfer.get(TREE_MIME);
-            if (treeItem && Array.isArray(treeItem.value)) {
-                droppedNodes = treeItem.value.filter(n => n.nodeType === 'folder' ||
-                    n.nodeType === 'class' ||
-                    n.nodeType === 'function' ||
-                    n.nodeType === 'global');
+            if (treeItem) {
+                const val = treeItem.value;
+                if (Array.isArray(val)) {
+                    droppedNodes = val.filter(isMovable);
+                }
             }
         }
-        if (!droppedNodes || droppedNodes.length === 0) {
+        if (droppedNodes.length === 0) {
             return;
         }
         // Determine target folder ID (null → root / unassigned)
