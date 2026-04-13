@@ -14,8 +14,10 @@ export type NodeType =
 
 const DRAG_MIME = 'application/pyclasswizard-dnd';
 // VS Code automatically adds this built-in MIME for same-tree drags.
-// It MUST be in dropMimeTypes for VS Code to recognise intra-tree drops.
-const TREE_MIME = 'application/vnd.code.tree.pyclasswizard.classView';
+// The tree-id portion MUST be fully lower-cased to match what VS Code
+// generates: application/vnd.code.tree.<treeidlowercase>.
+// Tree view ID = "pyclasswizard.classView"  →  lower-case = "pyclasswizard.classview"
+const TREE_MIME = 'application/vnd.code.tree.pyclasswizard.classview';
 
 /** Stable key that identifies a top-level symbol for CLW persistence. */
 function makeSymbolKey(filePath: string, kind: string, name: string): string {
@@ -115,6 +117,12 @@ export class PyClassTreeProvider
   private fileWatcher: vscode.FileSystemWatcher | undefined;
   /** Nodes currently being dragged; populated in handleDrag, consumed in handleDrop. */
   private _pendingDrag: PyClassNode[] = [];
+  /**
+   * Maps each node's `id` to its parent node.
+   * Root-level nodes are NOT present in this map (getParent returns undefined for them).
+   * VS Code requires getParent() to be implemented for TreeDragAndDropController to work.
+   */
+  private _parentMap = new Map<string, PyClassNode>();
 
   // TreeDragAndDropController ------------------------------------------------
   // DRAG_MIME carries our node payload; TREE_MIME is VS Code's built-in
@@ -149,6 +157,15 @@ export class PyClassTreeProvider
 
   getTreeItem(element: PyClassNode): vscode.TreeItem {
     return element;
+  }
+
+  /**
+   * Required by VS Code for drag-and-drop to work.
+   * Returns the parent of a node, or undefined for root-level nodes.
+   */
+  getParent(element: PyClassNode): PyClassNode | undefined {
+    if (!element.id) { return undefined; }
+    return this._parentMap.get(element.id);
   }
 
   async getChildren(element?: PyClassNode): Promise<PyClassNode[]> {
@@ -460,7 +477,13 @@ export class PyClassTreeProvider
     const unassignedVars = varNodes.filter(n => !allAssignedKeys.has(n.symbolKey ?? ''));
 
     // Order: folders (A-Z) → classes (A-Z) → functions (A-Z) → globals (A-Z)
-    return [...topFolderNodes, ...unassignedClasses, ...unassignedFunctions, ...unassignedVars];
+    const result = [...topFolderNodes, ...unassignedClasses, ...unassignedFunctions, ...unassignedVars];
+
+    // Rebuild parent map so that getParent() works correctly.
+    // VS Code requires getParent() for drag-and-drop to function.
+    this._parentMap.clear();
+    this.registerParents(result, undefined);
+    return result;
   }
 
   private symbolsToNodes(symbols: PySymbol[], filePath: string): PyClassNode[] {
@@ -489,6 +512,26 @@ export class PyClassTreeProvider
         sym.detail,
       );
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Parent map — required for drag-and-drop (getParent must work)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Recursively registers parent relationships for all nodes in the tree.
+   * Root-level nodes (parent === undefined) are NOT added to the map;
+   * getParent() returns undefined for unknown IDs, which is correct for roots.
+   */
+  private registerParents(nodes: PyClassNode[], parent: PyClassNode | undefined): void {
+    for (const node of nodes) {
+      if (node.id && parent !== undefined) {
+        this._parentMap.set(node.id, parent);
+      }
+      if (node.children.length > 0) {
+        this.registerParents(node.children, node);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------

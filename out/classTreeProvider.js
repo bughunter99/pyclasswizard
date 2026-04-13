@@ -40,8 +40,10 @@ const path = __importStar(require("path"));
 const pythonParser_1 = require("./pythonParser");
 const DRAG_MIME = 'application/pyclasswizard-dnd';
 // VS Code automatically adds this built-in MIME for same-tree drags.
-// It MUST be in dropMimeTypes for VS Code to recognise intra-tree drops.
-const TREE_MIME = 'application/vnd.code.tree.pyclasswizard.classView';
+// The tree-id portion MUST be fully lower-cased to match what VS Code
+// generates: application/vnd.code.tree.<treeidlowercase>.
+// Tree view ID = "pyclasswizard.classView"  →  lower-case = "pyclasswizard.classview"
+const TREE_MIME = 'application/vnd.code.tree.pyclasswizard.classview';
 /** Stable key that identifies a top-level symbol for CLW persistence. */
 function makeSymbolKey(filePath, kind, name) {
     return `${filePath}::${kind}::${name}`;
@@ -126,6 +128,12 @@ class PyClassTreeProvider {
         this.rootNodes = [];
         /** Nodes currently being dragged; populated in handleDrag, consumed in handleDrop. */
         this._pendingDrag = [];
+        /**
+         * Maps each node's `id` to its parent node.
+         * Root-level nodes are NOT present in this map (getParent returns undefined for them).
+         * VS Code requires getParent() to be implemented for TreeDragAndDropController to work.
+         */
+        this._parentMap = new Map();
         // TreeDragAndDropController ------------------------------------------------
         // DRAG_MIME carries our node payload; TREE_MIME is VS Code's built-in
         // same-tree type and MUST appear in dropMimeTypes so that VS Code actually
@@ -150,6 +158,16 @@ class PyClassTreeProvider {
     }
     getTreeItem(element) {
         return element;
+    }
+    /**
+     * Required by VS Code for drag-and-drop to work.
+     * Returns the parent of a node, or undefined for root-level nodes.
+     */
+    getParent(element) {
+        if (!element.id) {
+            return undefined;
+        }
+        return this._parentMap.get(element.id);
     }
     async getChildren(element) {
         if (!element) {
@@ -422,7 +440,12 @@ class PyClassTreeProvider {
         const unassignedFunctions = functionNodes.filter(n => !allAssignedKeys.has(n.symbolKey ?? ''));
         const unassignedVars = varNodes.filter(n => !allAssignedKeys.has(n.symbolKey ?? ''));
         // Order: folders (A-Z) → classes (A-Z) → functions (A-Z) → globals (A-Z)
-        return [...topFolderNodes, ...unassignedClasses, ...unassignedFunctions, ...unassignedVars];
+        const result = [...topFolderNodes, ...unassignedClasses, ...unassignedFunctions, ...unassignedVars];
+        // Rebuild parent map so that getParent() works correctly.
+        // VS Code requires getParent() for drag-and-drop to function.
+        this._parentMap.clear();
+        this.registerParents(result, undefined);
+        return result;
     }
     symbolsToNodes(symbols, filePath) {
         // Sort: methods first (A→Z), then variables/globals (A→Z)
@@ -441,6 +464,24 @@ class PyClassTreeProvider {
                 : vscode.TreeItemCollapsibleState.None;
             return new PyClassNode(sym, sym.kind === 'global' ? 'global' : sym.kind, sym.name, filePath, childNodes, collapsible, sym.detail);
         });
+    }
+    // ---------------------------------------------------------------------------
+    // Parent map — required for drag-and-drop (getParent must work)
+    // ---------------------------------------------------------------------------
+    /**
+     * Recursively registers parent relationships for all nodes in the tree.
+     * Root-level nodes (parent === undefined) are NOT added to the map;
+     * getParent() returns undefined for unknown IDs, which is correct for roots.
+     */
+    registerParents(nodes, parent) {
+        for (const node of nodes) {
+            if (node.id && parent !== undefined) {
+                this._parentMap.set(node.id, parent);
+            }
+            if (node.children.length > 0) {
+                this.registerParents(node.children, node);
+            }
+        }
     }
     // ---------------------------------------------------------------------------
     // Reveal helper (used by goToDefinition)
