@@ -54,6 +54,25 @@ function activate(context) {
         // Re-triggering the tree data change will reset expansion state
         provider.refresh();
     });
+    // Shared navigation helper: open file and move cursor to the symbol.
+    async function navigateToNode(node) {
+        if (!node.symbol) {
+            return;
+        }
+        const uri = vscode.Uri.file(node.filePath);
+        const position = new vscode.Position(node.symbol.line, node.symbol.column);
+        const range = new vscode.Range(position, position);
+        const editor = await vscode.window.showTextDocument(uri, {
+            selection: range,
+            preserveFocus: false,
+        });
+        editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    }
+    // Track the currently selected tree node so that keyboard commands can use it.
+    let selectedNode;
+    treeView.onDidChangeSelection((e) => {
+        selectedNode = e.selection[0];
+    });
     // State for double-click detection (navigate only when the same node is
     // activated twice within 400 ms; triple-click resets the window so it does
     // not trigger another navigation immediately).
@@ -73,14 +92,14 @@ function activate(context) {
         if (!isDoubleClick) {
             return;
         }
-        const uri = vscode.Uri.file(node.filePath);
-        const position = new vscode.Position(node.symbol.line, node.symbol.column);
-        const range = new vscode.Range(position, position);
-        const editor = await vscode.window.showTextDocument(uri, {
-            selection: range,
-            preserveFocus: false,
-        });
-        editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        await navigateToNode(node);
+    });
+    // Keyboard navigation: Enter key navigates directly to the selected symbol
+    // without requiring a double-click (VS6 ClassWizard-style behaviour).
+    const navigateToSourceCmd = vscode.commands.registerCommand('pyclasswizard.navigateToSource', async () => {
+        if (selectedNode) {
+            await navigateToNode(selectedNode);
+        }
     });
     // ---------------------------------------------------------------------------
     // Auto-refresh when workspace changes or active editor changes
@@ -106,7 +125,7 @@ function activate(context) {
     // Initial refresh
     // ---------------------------------------------------------------------------
     provider.refresh();
-    context.subscriptions.push(treeView, provider, refreshCmd, collapseAllCmd, goToDefinitionCmd, configChangeListener, workspaceFolderListener, activeEditorListener);
+    context.subscriptions.push(treeView, provider, refreshCmd, collapseAllCmd, goToDefinitionCmd, navigateToSourceCmd, configChangeListener, workspaceFolderListener, activeEditorListener);
 }
 function deactivate() {
     // Nothing to clean up beyond subscriptions

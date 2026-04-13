@@ -23,6 +23,26 @@ export function activate(context: vscode.ExtensionContext): void {
     provider.refresh();
   });
 
+  // Shared navigation helper: open file and move cursor to the symbol.
+  async function navigateToNode(node: PyClassNode): Promise<void> {
+    if (!node.symbol) { return; }
+    const uri = vscode.Uri.file(node.filePath);
+    const position = new vscode.Position(node.symbol.line, node.symbol.column);
+    const range = new vscode.Range(position, position);
+
+    const editor = await vscode.window.showTextDocument(uri, {
+      selection: range,
+      preserveFocus: false,
+    });
+    editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+  }
+
+  // Track the currently selected tree node so that keyboard commands can use it.
+  let selectedNode: PyClassNode | undefined;
+  treeView.onDidChangeSelection((e) => {
+    selectedNode = e.selection[0];
+  });
+
   // State for double-click detection (navigate only when the same node is
   // activated twice within 400 ms; triple-click resets the window so it does
   // not trigger another navigation immediately).
@@ -45,16 +65,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
       if (!isDoubleClick) { return; }
 
-      const uri = vscode.Uri.file(node.filePath);
-      const position = new vscode.Position(node.symbol.line, node.symbol.column);
-      const range = new vscode.Range(position, position);
+      await navigateToNode(node);
+    }
+  );
 
-      const editor = await vscode.window.showTextDocument(uri, {
-        selection: range,
-        preserveFocus: false,
-      });
-
-      editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+  // Keyboard navigation: Enter key navigates directly to the selected symbol
+  // without requiring a double-click (VS6 ClassWizard-style behaviour).
+  const navigateToSourceCmd = vscode.commands.registerCommand(
+    'pyclasswizard.navigateToSource',
+    async () => {
+      if (selectedNode) {
+        await navigateToNode(selectedNode);
+      }
     }
   );
 
@@ -92,6 +114,7 @@ export function activate(context: vscode.ExtensionContext): void {
     refreshCmd,
     collapseAllCmd,
     goToDefinitionCmd,
+    navigateToSourceCmd,
     configChangeListener,
     workspaceFolderListener,
     activeEditorListener,

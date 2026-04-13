@@ -73,10 +73,22 @@
         "category": "PyClassWizard"
       },
       {
+        "command": "pyclasswizard.navigateToSource",
+        "title": "Navigate to Source",
+        "category": "PyClassWizard"
+      },
+      {
         "command": "pyclasswizard.collapseAll",
         "title": "Collapse All",
         "icon": "$(collapse-all)",
         "category": "PyClassWizard"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "pyclasswizard.navigateToSource",
+        "key": "enter",
+        "when": "focusedView == pyclasswizard.classView"
       }
     ],
     "menus": {
